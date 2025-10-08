@@ -1,0 +1,1096 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>EcoWaste – AI Waste Deposit</title>
+    <meta name="description" content="AI-powered eco points: detect waste via camera, earn points, leaderboard, and export reports." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+    <!-- Tailwind via CDN (for prototype) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+/* Eco-friendly utility additions layered on Tailwind */
+:root {
+  --emerald-500: #10b981;
+  --sky-500: #0ea5e9;
+}
+
+body { font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Noto Sans, Ubuntu, Cantarell, Helvetica Neue, Arial, "Apple Color Emoji", "Segoe UI Emoji"; }
+
+.card { background: white; border-radius: 1rem; padding: 1rem; box-shadow: 0 8px 30px rgba(2,6,23,.05); }
+
+.btn-primary { display: inline-flex; align-items: center; gap: .5rem; background: linear-gradient(135deg, var(--emerald-500), var(--sky-500)); color: white; padding: .6rem .9rem; border-radius: .75rem; font-weight: 600; box-shadow: 0 8px 20px rgba(16,185,129,.25); }
+.btn-primary:hover { filter: brightness(1.05); }
+
+.btn-secondary { display: inline-flex; align-items: center; gap: .5rem; background: #065f46; color: white; padding: .6rem .9rem; border-radius: .75rem; font-weight: 600; }
+.btn-outline { display: inline-flex; align-items: center; gap: .5rem; background: white; color: #065f46; border: 1px solid #a7f3d0; padding: .55rem .85rem; border-radius: .75rem; font-weight: 600; }
+.btn-tertiary { display: inline-flex; align-items: center; gap: .4rem; color: #0f766e; padding: .4rem .55rem; border-radius: .6rem; }
+
+.input { width: 100%; border: 1px solid #e2e8f0; border-radius: .75rem; padding: .6rem .8rem; outline: none; }
+.input:focus { border-color: #93c5fd; box-shadow: 0 0 0 4px rgba(59,130,246,.1); }
+
+#toast { background: rgba(15, 118, 110, .98); color: white; padding: .7rem 1rem; border-radius: .75rem; box-shadow: 0 8px 20px rgba(2,6,23,.2); }
+
+/* Camera overlay canvas ensures pixel grid rendering */
+#overlay { image-rendering: pixelated; }
+    </style>
+
+    <!-- Icons -->
+    <script src="https://unpkg.com/feather-icons"></script>
+
+    <!-- TensorFlow.js + coco-ssd model -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3"></script>
+
+    <!-- Optional: Supabase client (Lovable Cloud compatible) -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+  </head>
+
+  <body class="min-h-screen bg-gradient-to-b from-emerald-50 to-sky-50 text-slate-800">
+    <!-- App Shell -->
+    <div class="max-w-4xl mx-auto p-4 sm:p-6">
+      <!-- Navbar -->
+      <nav class="flex items-center justify-between bg-white/80 backdrop-blur rounded-2xl px-4 py-3 shadow-md">
+        <div class="flex items-center gap-3">
+          <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-500 to-sky-500 grid place-items-center text-white shadow">
+            <i data-feather="recycle" class="w-5 h-5"></i>
+          </div>
+          <div>
+            <div class="font-semibold">EcoWaste</div>
+            <div class="text-xs text-slate-500">AI Waste Deposit</div>
+          </div>
+        </div>
+        <div class="flex items-center gap-2">
+          <button id="btn-open-login" class="btn-secondary hidden">Login</button>
+          <button id="btn-open-admin" class="btn-outline">Admin</button>
+          <div id="user-chip" class="hidden items-center gap-2">
+            <div class="w-8 h-8 rounded-full bg-emerald-100 grid place-items-center text-emerald-700 font-semibold text-sm" id="user-initial">U</div>
+            <div class="text-sm" id="user-email">user@example.com</div>
+            <button id="btn-logout" class="btn-tertiary" title="Logout">
+              <i data-feather="log-out" class="w-4 h-4"></i>
+            </button>
+          </div>
+        </div>
+      </nav>
+
+      <!-- Dashboard Header -->
+      <section class="mt-6 grid gap-4 sm:grid-cols-3">
+        <div class="card sm:col-span-2">
+          <div class="flex items-center justify-between">
+            <div>
+              <h1 class="text-xl font-semibold">Welcome back, <span id="welcome-name">Eco Hero</span> 👋</h1>
+              <p class="text-slate-500 text-sm">Scan waste, earn eco-points, unlock rewards.</p>
+            </div>
+            <div class="hidden sm:block">
+              <img src="https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/svg/267b.svg" alt="recycle" class="w-12 h-12 opacity-90" />
+            </div>
+          </div>
+          <div class="mt-4 grid grid-cols-2 gap-3">
+            <button id="btn-deposit" class="btn-primary w-full">
+              <i data-feather="camera" class="w-4 h-4"></i>
+              <span>Deposit Waste</span>
+            </button>
+            <button id="btn-rewards" class="btn-outline w-full">
+              <i data-feather="gift" class="w-4 h-4"></i>
+              <span>Rewards</span>
+            </button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="flex items-center justify-between">
+            <div>
+              <div class="text-sm text-slate-500">Total Eco-Points</div>
+              <div id="total-points" class="text-3xl font-bold mt-1">0</div>
+            </div>
+            <div class="w-10 h-10 rounded-xl bg-amber-100 grid place-items-center text-amber-700">
+              <i data-feather="star" class="w-5 h-5"></i>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Cards: Wallet + Leaderboard -->
+      <section class="mt-6 grid gap-4 sm:grid-cols-2">
+        <!-- Wallet -->
+        <div class="card">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="font-semibold">Wallet</h2>
+            <div class="flex items-center gap-2">
+              <button id="btn-export" class="btn-tertiary">
+                <i data-feather="download" class="w-4 h-4"></i>
+                <span class="hidden sm:inline">Export CSV</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="overflow-auto -mx-2">
+            <table class="min-w-[520px] w-full text-sm">
+              <thead>
+                <tr class="text-slate-500">
+                  <th class="text-left py-2 px-2">Date</th>
+                  <th class="text-left py-2 px-2">Category</th>
+                  <th class="text-left py-2 px-2">Points</th>
+                </tr>
+              </thead>
+              <tbody id="wallet-rows"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Leaderboard -->
+        <div class="card">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="font-semibold">Leaderboard</h2>
+            <button id="btn-refresh-leaderboard" class="btn-tertiary">
+              <i data-feather="refresh-ccw" class="w-4 h-4"></i>
+            </button>
+          </div>
+
+          <ol id="leaderboard" class="space-y-2"></ol>
+        </div>
+      </section>
+    </div>
+
+    <!-- Camera Modal -->
+    <div id="camera-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur hidden items-center justify-center p-4">
+      <div class="bg-white rounded-2xl w-full max-w-xl shadow-xl overflow-hidden">
+        <div class="p-3 flex items-center justify-between border-b">
+          <div class="font-semibold">Deposit Waste</div>
+          <button id="btn-close-camera" class="btn-tertiary">
+            <i data-feather="x" class="w-4 h-4"></i>
+          </button>
+        </div>
+        <div class="p-4">
+          <div class="relative rounded-xl overflow-hidden bg-slate-100 aspect-video">
+            <video id="camera" autoplay playsinline class="w-full h-full object-cover"></video>
+            <canvas id="overlay" class="absolute inset-0 w-full h-full"></canvas>
+            <div id="scan-badge" class="absolute left-3 top-3 hidden">
+              <span class="inline-flex items-center gap-2 px-2.5 py-1.5 rounded-full bg-emerald-600 text-white text-xs font-medium shadow">
+                <i data-feather="cpu" class="w-3.5 h-3.5"></i>
+                Scanning...
+              </span>
+            </div>
+          </div>
+          <div class="mt-4 flex items-center justify-between">
+            <div class="text-sm text-slate-600">
+              Detected: <span id="detected-label" class="font-semibold">—</span>
+            </div>
+            <div class="flex gap-2">
+              <button id="btn-start-scan" class="btn-primary">
+                <i data-feather="play" class="w-4 h-4"></i>
+                <span>Start</span>
+              </button>
+              <button id="btn-stop-scan" class="btn-outline">
+                <i data-feather="square" class="w-4 h-4"></i>
+                <span>Stop</span>
+              </button>
+              <button id="btn-add-points" class="btn-secondary" disabled>
+                <i data-feather="plus-circle" class="w-4 h-4"></i>
+                <span>Add Points</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Auth Modal -->
+    <div id="auth-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur hidden items-center justify-center p-4">
+      <div class="bg-white rounded-2xl w-full max-w-md shadow-xl overflow-hidden">
+        <div class="p-3 flex items-center justify-between border-b">
+          <div class="font-semibold">Login</div>
+          <button id="btn-close-auth" class="btn-tertiary">
+            <i data-feather="x" class="w-4 h-4"></i>
+          </button>
+        </div>
+        <form id="auth-form" class="p-4 space-y-3">
+          <div class="space-y-1">
+            <label class="text-sm text-slate-600">Email</label>
+            <input id="auth-email" type="email" class="input" placeholder="you@example.com" required />
+          </div>
+          <div class="space-y-1">
+            <label class="text-sm text-slate-600">Password</label>
+            <input id="auth-password" type="password" class="input" placeholder="••••••••" required />
+          </div>
+          <div class="flex items-center justify-between">
+            <button type="submit" class="btn-primary">
+              <i data-feather="log-in" class="w-4 h-4"></i>
+              <span>Sign In / Up</span>
+            </button>
+            <button type="button" id="btn-guest" class="btn-outline">Continue as Guest</button>
+          </div>
+          <p class="text-xs text-slate-500">For prototype: sign-in creates account if it doesn't exist.</p>
+        </form>
+      </div>
+    </div>
+
+    <!-- Admin Login Modal -->
+    <div id="admin-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur hidden items-center justify-center p-4">
+      <div class="bg-white rounded-2xl w-full max-w-md shadow-xl overflow-hidden">
+        <div class="p-3 flex items-center justify-between border-b">
+          <div class="font-semibold">Admin Login</div>
+          <button id="btn-close-admin" class="btn-tertiary">
+            <i data-feather="x" class="w-4 h-4"></i>
+          </button>
+        </div>
+        <form id="admin-form" class="p-4 space-y-3">
+          <div class="space-y-1">
+            <label class="text-sm text-slate-600">Username</label>
+            <input id="admin-username" type="text" class="input" placeholder="admin" required />
+          </div>
+          <div class="space-y-1">
+            <label class="text-sm text-slate-600">Password</label>
+            <input id="admin-password" type="password" class="input" placeholder="••••••••" required />
+          </div>
+          <div class="flex items-center justify-between">
+            <button type="submit" class="btn-primary">
+              <i data-feather="log-in" class="w-4 h-4"></i>
+              <span>Login</span>
+            </button>
+            <div class="text-xs text-slate-500">Use your admin credentials</div>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Admin Dashboard -->
+    <div id="admin-panel" class="fixed inset-0 bg-slate-900/60 backdrop-blur hidden items-center justify-center p-4">
+      <div class="bg-white rounded-2xl w-full max-w-5xl shadow-2xl overflow-hidden">
+        <div class="p-3 flex items-center justify-between border-b">
+          <div class="font-semibold">Admin Dashboard</div>
+          <div class="flex items-center gap-2">
+            <button id="btn-admin-export" class="btn-outline">
+              <i data-feather="download" class="w-4 h-4"></i>
+              <span class="hidden sm:inline">Export CSV</span>
+            </button>
+            <button id="btn-close-admin-panel" class="btn-tertiary">
+              <i data-feather="x" class="w-4 h-4"></i>
+            </button>
+          </div>
+        </div>
+        <div class="p-4 grid gap-4 sm:grid-cols-3">
+          <div class="card">
+            <div class="text-sm text-slate-500">Total Users</div>
+            <div id="admin-total-users" class="text-3xl font-bold mt-1">0</div>
+          </div>
+          <div class="card">
+            <div class="text-sm text-slate-500">Total Deposits</div>
+            <div id="admin-total-deposits" class="text-3xl font-bold mt-1">0</div>
+          </div>
+          <div class="card">
+            <div class="text-sm text-slate-500">Total Points Issued</div>
+            <div id="admin-total-points" class="text-3xl font-bold mt-1">0</div>
+          </div>
+          <div class="sm:col-span-3 card">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="font-semibold">Recent Transactions</h3>
+              <div class="text-sm text-slate-500">Latest 100</div>
+            </div>
+            <div class="overflow-auto -mx-2">
+              <table class="min-w-[720px] w-full text-sm">
+                <thead>
+                  <tr class="text-slate-500">
+                    <th class="text-left py-2 px-2">Date</th>
+                    <th class="text-left py-2 px-2">User</th>
+                    <th class="text-left py-2 px-2">Category</th>
+                    <th class="text-left py-2 px-2">Points</th>
+                    <th class="text-left py-2 px-2">Type</th>
+                  </tr>
+                </thead>
+                <tbody id="admin-tx-rows"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Rewards Modal -->
+    <div id="rewards-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur hidden items-center justify-center p-4">
+      <div class="bg-white rounded-2xl w-full max-w-2xl shadow-xl overflow-hidden">
+        <div class="p-3 flex items-center justify-between border-b">
+          <div class="font-semibold">Rewards & Coupons</div>
+          <button id="btn-close-rewards" class="btn-tertiary">
+            <i data-feather="x" class="w-4 h-4"></i>
+          </button>
+        </div>
+        <div class="p-4">
+          <p class="text-sm text-slate-600 mb-3">Redeem your eco-points for discounts and perks.</p>
+          <div id="rewards-list" class="grid gap-3 sm:grid-cols-2"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toasts -->
+    <div id="toast" class="fixed left-1/2 -translate-x-1/2 bottom-6 hidden"></div>
+
+    <script>
+      /*
+        EcoWaste Prototype (Single-file)
+        - Optional Supabase auth (fallback to localStorage guest)
+        - TensorFlow.js coco-ssd detection
+        - Points mapping, wallet history, leaderboard, CSV export
+      */
+
+      // ===== Config =====
+      const POINTS_BY_CATEGORY = {
+        plastic: 10,
+        paper: 5,
+        steel: 15,
+        organic: 8,
+      };
+
+      // Map coco-ssd class names to our categories
+      const ALLOWED_CATEGORIES = ['plastic', 'paper', 'steel', 'organic'];
+      const CATEGORY_MAP = {
+        // plastic-like
+        'bottle': 'plastic',
+        'cup': 'plastic',
+        'cell phone': 'plastic',
+        'remote': 'plastic',
+        // paper-like
+        'book': 'paper',
+        'toilet paper': 'paper',
+        // steel/metal-like
+        'fork': 'steel',
+        'knife': 'steel',
+        'spoon': 'steel',
+        'scissors': 'steel',
+        'laptop': 'steel',
+        // organic
+        'banana': 'organic',
+        'apple': 'organic',
+        'orange': 'organic',
+        'broccoli': 'organic',
+        'carrot': 'organic',
+      };
+
+      // Optional Supabase (Lovable Cloud) — replace with your keys to enable
+      const SUPABASE_URL = window.ENV_SUPABASE_URL || '';
+      const SUPABASE_ANON_KEY = window.ENV_SUPABASE_ANON_KEY || '';
+      const supabaseClient = (SUPABASE_URL && SUPABASE_ANON_KEY)
+        ? window.Supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+        : null;
+
+      // ===== DOM =====
+      const el = (id) => document.getElementById(id);
+      const btnDeposit = el('btn-deposit');
+      const btnRewards = el('btn-rewards');
+      const totalPointsEl = el('total-points');
+      const walletRowsEl = el('wallet-rows');
+      const leaderboardEl = el('leaderboard');
+      const btnExport = el('btn-export');
+      const btnRefreshLb = el('btn-refresh-leaderboard');
+
+      const cameraModal = el('camera-modal');
+      const btnCloseCamera = el('btn-close-camera');
+      const btnStartScan = el('btn-start-scan');
+      const btnStopScan = el('btn-stop-scan');
+      const btnAddPoints = el('btn-add-points');
+      const detectedLabel = el('detected-label');
+      const scanBadge = el('scan-badge');
+      const video = el('camera');
+      const canvas = el('overlay');
+      const ctx = canvas.getContext('2d');
+
+      const btnOpenLogin = el('btn-open-login');
+      const btnOpenAdmin = el('btn-open-admin');
+      const authModal = el('auth-modal');
+      const btnCloseAuth = el('btn-close-auth');
+      const authForm = el('auth-form');
+      const authEmail = el('auth-email');
+      const authPassword = el('auth-password');
+      const btnGuest = el('btn-guest');
+      const userChip = el('user-chip');
+      const userInitial = el('user-initial');
+      const userEmail = el('user-email');
+      const btnLogout = el('btn-logout');
+      const welcomeName = el('welcome-name');
+      const toastEl = el('toast');
+
+      // Admin
+      const adminModal = el('admin-modal');
+      const adminForm = el('admin-form');
+      const adminUsername = el('admin-username');
+      const adminPassword = el('admin-password');
+      const btnCloseAdmin = el('btn-close-admin');
+      const adminPanel = el('admin-panel');
+      const btnCloseAdminPanel = el('btn-close-admin-panel');
+      const btnAdminExport = el('btn-admin-export');
+      const adminTotalUsers = el('admin-total-users');
+      const adminTotalDeposits = el('admin-total-deposits');
+      const adminTotalPoints = el('admin-total-points');
+      const adminTxRows = el('admin-tx-rows');
+
+      // ===== State =====
+      let model = null;
+      let isScanning = false;
+      let lastDetection = null; // { category, points, sourceClass, score }
+
+      let currentUser = {
+        id: 'guest',
+        email: 'guest@local',
+        displayName: 'Guest',
+      };
+
+      // Local persistence fallback (emulates Firestore)
+      const LS_KEY_PROFILE = 'ecowaste_profile';
+      const LS_KEY_TX = 'ecowaste_transactions';
+      const LS_KEY_LB = 'ecowaste_leaderboard';
+
+      // ===== Utils =====
+      function show(elm) { elm.classList.remove('hidden'); }
+      function hide(elm) { elm.classList.add('hidden'); }
+      function toast(message, variant = 'success') {
+        toastEl.textContent = message;
+        toastEl.style.background = variant === 'error' ? 'rgba(220,38,38,.95)' : 'rgba(15,118,110,.98)';
+        show(toastEl);
+        setTimeout(() => hide(toastEl), 2200);
+      }
+
+      function getPointsForCategory(category) {
+        return POINTS_BY_CATEGORY[category] || 5;
+      }
+
+      function nowISO() {
+        return new Date().toISOString();
+      }
+
+      // ===== Auth (Supabase optional) =====
+      async function signInOrSignUp(email, password) {
+        if (!supabaseClient) {
+          // Local mock auth
+          currentUser = { id: 'guest', email, displayName: email.split('@')[0] };
+          persistProfile({ eco_points: getProfile().eco_points || 0, email: currentUser.email, displayName: currentUser.displayName });
+          updateUserChip();
+          return { user: currentUser };
+        }
+        const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+        if (error) {
+          const { data: signUpData, error: signUpErr } = await supabaseClient.auth.signUp({ email, password });
+          if (signUpErr) throw signUpErr;
+          currentUser = { id: signUpData.user.id, email: signUpData.user.email, displayName: signUpData.user.email.split('@')[0] };
+          updateUserChip();
+          return { user: currentUser };
+        }
+        currentUser = { id: data.user.id, email: data.user.email, displayName: data.user.email.split('@')[0] };
+        updateUserChip();
+        return { user: currentUser };
+      }
+
+      async function signOut() {
+        if (supabaseClient) {
+          await supabaseClient.auth.signOut();
+        }
+        currentUser = { id: 'guest', email: 'guest@local', displayName: 'Guest' };
+        updateUserChip();
+      }
+
+      function updateUserChip() {
+        if (currentUser && currentUser.email && currentUser.id !== 'guest') {
+          userEmail.textContent = currentUser.email;
+          userInitial.textContent = currentUser.email.charAt(0).toUpperCase();
+          welcomeName.textContent = currentUser.displayName || 'Eco Hero';
+          show(userChip);
+          hide(btnOpenLogin);
+        } else {
+          welcomeName.textContent = 'Eco Hero';
+          hide(userChip);
+          show(btnOpenLogin);
+        }
+      }
+
+      // ===== Persistence (localStorage) =====
+      function getProfile() {
+        const raw = localStorage.getItem(LS_KEY_PROFILE);
+        return raw ? JSON.parse(raw) : { eco_points: 0 };
+      }
+      function persistProfile(profile) {
+        localStorage.setItem(LS_KEY_PROFILE, JSON.stringify(profile));
+      }
+      function getTransactions() {
+        const raw = localStorage.getItem(LS_KEY_TX);
+        return raw ? JSON.parse(raw) : [];
+      }
+      function persistTransactions(txs) {
+        localStorage.setItem(LS_KEY_TX, JSON.stringify(txs));
+      }
+      function getLeaderboard() {
+        const raw = localStorage.getItem(LS_KEY_LB);
+        return raw ? JSON.parse(raw) : [];
+      }
+      function persistLeaderboard(lb) {
+        localStorage.setItem(LS_KEY_LB, JSON.stringify(lb));
+      }
+
+      // ===== UI Sync =====
+      async function renderPoints() {
+        if (supabaseClient && currentUser.id !== 'guest') {
+          const prof = await dbGetProfile();
+          totalPointsEl.textContent = (prof && prof.eco_points) || 0;
+        } else {
+          const profile = getProfile();
+          totalPointsEl.textContent = profile.eco_points || 0;
+        }
+      }
+
+      async function renderWallet() {
+        let txs;
+        if (supabaseClient && currentUser.id !== 'guest') {
+          txs = await dbGetTransactions();
+        } else {
+          txs = getTransactions();
+        }
+        txs = txs.sort((a, b) => (a.timestamp < b.timestamp ? 1 : -1));
+        walletRowsEl.innerHTML = txs
+          .map((t) => {
+            const d = new Date(t.timestamp);
+            const sign = t.points >= 0 ? '+' : '';
+            return `<tr>
+              <td class="py-2 px-2">${d.toLocaleString()}</td>
+              <td class="py-2 px-2">${t.waste_category}</td>
+              <td class="py-2 px-2 font-semibold">${sign}${t.points}</td>
+            </tr>`;
+          })
+          .join('');
+      }
+
+      async function renderLeaderboard() {
+        let lb;
+        if (supabaseClient && currentUser.id !== 'guest') {
+          lb = await dbGetLeaderboard();
+        } else {
+          lb = getLeaderboard();
+        }
+        lb = lb.sort((a, b) => b.points - a.points).slice(0, 10);
+        leaderboardEl.innerHTML = lb
+          .map((u, idx) => {
+            const badge = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : '🏅';
+            return `<li class="flex items-center justify-between bg-slate-50 rounded-lg px-3 py-2">
+              <div class="flex items-center gap-2"><span>${badge}</span><span class="font-medium">${u.name}</span></div>
+              <div class="font-semibold">${u.points}</div>
+            </li>`;
+          })
+          .join('');
+      }
+
+      // ===== Rewards =====
+      const REWARDS = [
+        { id: 'r-5off', title: '₹50 Off Eco Store', cost: 100, desc: 'Save ₹50 on eco-friendly products.' },
+        { id: 'r-coffee', title: 'Free Coffee', cost: 80, desc: '1 free coffee at partner cafes.' },
+        { id: 'r-bus', title: 'Bus Ticket 50% Off', cost: 120, desc: 'Half price on one city bus ride.' },
+        { id: 'r-plant', title: 'Plant Sapling', cost: 60, desc: 'Sponsor a sapling in your name.' },
+      ];
+
+      const rewardsModal = document.getElementById('rewards-modal');
+      const btnCloseRewards = document.getElementById('btn-close-rewards');
+      const rewardsList = document.getElementById('rewards-list');
+
+      function renderRewards() {
+        const points = getProfile().eco_points || 0;
+        rewardsList.innerHTML = REWARDS.map((r) => {
+          const enough = points >= r.cost;
+          return `<div class="border rounded-xl p-3 bg-slate-50">
+            <div class="flex items-start justify-between gap-2">
+              <div>
+                <div class="font-semibold">${r.title}</div>
+                <div class="text-sm text-slate-600">${r.desc}</div>
+              </div>
+              <div class="text-right">
+                <div class="text-sm text-slate-500">Cost</div>
+                <div class="font-bold">${r.cost} pts</div>
+              </div>
+            </div>
+            <div class="mt-3 flex justify-end">
+              <button data-redeem="${r.id}" class="${enough ? 'btn-primary' : 'btn-outline'}" ${enough ? '' : 'disabled'}>
+                ${enough ? 'Redeem' : 'Not enough points'}
+              </button>
+            </div>
+          </div>`;
+        }).join('');
+        // hook buttons
+        rewardsList.querySelectorAll('[data-redeem]').forEach((btn) => {
+          btn.addEventListener('click', () => redeemReward(btn.getAttribute('data-redeem')));
+        });
+      }
+
+      async function redeemReward(rewardId) {
+        const reward = REWARDS.find((r) => r.id === rewardId);
+        if (!reward) return;
+        if (supabaseClient && currentUser.id !== 'guest') {
+          const prof = await dbGetProfile().catch(() => ({ eco_points: 0 }));
+          if ((prof.eco_points || 0) < reward.cost) {
+            toast('Not enough points', 'error');
+            return;
+          }
+          await dbInsertTransaction(-reward.cost, `Redeem: ${reward.title}`, 'redeem');
+          await dbUpdatePoints(-reward.cost);
+        } else {
+          const profile = getProfile();
+          if ((profile.eco_points || 0) < reward.cost) {
+            toast('Not enough points', 'error');
+            return;
+          }
+          const newPts = (profile.eco_points || 0) - reward.cost;
+          persistProfile({ ...profile, eco_points: newPts });
+          const txs = getTransactions();
+          txs.push({ id: crypto.randomUUID(), user_id: currentUser.id, points: -reward.cost, waste_category: `Redeem: ${reward.title}`, timestamp: nowISO() });
+          persistTransactions(txs);
+        }
+        await renderPoints();
+        await renderWallet();
+        renderRewards();
+        toast(`Redeemed: ${reward.title}`);
+      }
+
+      function bumpLeaderboard(name, points) {
+        const lb = getLeaderboard();
+        const idx = lb.findIndex((u) => u.name === name);
+        if (idx >= 0) {
+          lb[idx].points += points;
+        } else {
+          lb.push({ name, points });
+        }
+        persistLeaderboard(lb);
+      }
+
+      // ===== Database (Supabase) helpers =====
+      async function dbEnsureProfile() {
+        if (!supabaseClient || currentUser.id === 'guest') return;
+        const { data, error } = await supabaseClient
+          .from('profiles')
+          .select('user_id, eco_points, email, display_name')
+          .eq('user_id', currentUser.id)
+          .maybeSingle();
+        if (error && error.code !== 'PGRST116') throw error;
+        if (!data) {
+          const { error: insErr } = await supabaseClient.from('profiles').insert({ user_id: currentUser.id, email: currentUser.email, display_name: currentUser.displayName, eco_points: 0 });
+          if (insErr) throw insErr;
+        }
+      }
+
+      async function dbGetProfile() {
+        const { data, error } = await supabaseClient
+          .from('profiles')
+          .select('eco_points, email, display_name')
+          .eq('user_id', currentUser.id)
+          .single();
+        if (error) throw error;
+        return { eco_points: data.eco_points, email: data.email, displayName: data.display_name };
+      }
+
+      async function dbUpdatePoints(incrementBy) {
+        const { data, error } = await supabaseClient
+          .rpc('increment_points', { p_user_id: currentUser.id, p_delta: incrementBy });
+        // fallback if function not present
+        if (error) {
+          const prof = await dbGetProfile().catch(() => ({ eco_points: 0 }));
+          const newPts = (prof.eco_points || 0) + incrementBy;
+          const { error: upErr } = await supabaseClient
+            .from('profiles')
+            .update({ eco_points: newPts })
+            .eq('user_id', currentUser.id);
+          if (upErr) throw upErr;
+          return newPts;
+        }
+        return data?.eco_points ?? null;
+      }
+
+      async function dbInsertTransaction(points, category, type = 'waste_deposit') {
+        const { error } = await supabaseClient
+          .from('transactions')
+          .insert({ user_id: currentUser.id, points, type, waste_category: category });
+        if (error) throw error;
+      }
+
+      async function dbGetTransactions() {
+        const { data, error } = await supabaseClient
+          .from('transactions')
+          .select('id, user_id, points, waste_category, timestamp')
+          .eq('user_id', currentUser.id)
+          .order('timestamp', { ascending: false });
+        if (error) throw error;
+        return data || [];
+      }
+
+      async function dbGetLeaderboard() {
+        const { data, error } = await supabaseClient
+          .from('profiles')
+          .select('display_name, eco_points')
+          .order('eco_points', { ascending: false })
+          .limit(10);
+        if (error) throw error;
+        return (data || []).map((r) => ({ name: r.display_name || 'User', points: r.eco_points || 0 }));
+      }
+
+      // ===== Camera + TF model =====
+      async function ensureModel() {
+        // Ensure TF backend is ready; prefer webgl, fallback to cpu
+        try {
+          if (tf && tf.ready) {
+            await tf.ready();
+            const backends = tf.engine().registryFactory ? Object.keys(tf.engine().registryFactory) : [];
+            if (backends.includes('webgl')) {
+              await tf.setBackend('webgl');
+            }
+            await tf.ready();
+          }
+        } catch (e) {
+          try { await tf.setBackend('cpu'); } catch (_) {}
+        }
+        if (!model) {
+          model = await cocoSsd.load({ base: 'lite_mobilenet_v2' });
+        }
+        return model;
+      }
+
+      function fitCanvasToVideo() {
+        const vw = video.videoWidth || video.clientWidth || 640;
+        const vh = video.videoHeight || video.clientHeight || 360;
+        const dpr = devicePixelRatio || 1;
+        canvas.width = vw * dpr;
+        canvas.height = vh * dpr;
+      }
+
+      async function startCamera() {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+        video.srcObject = stream;
+        // Wait for metadata to ensure videoWidth/Height
+        await new Promise((resolve) => {
+          if (video.readyState >= 1) return resolve();
+          video.onloadedmetadata = () => resolve();
+        });
+        await video.play();
+        fitCanvasToVideo();
+      }
+
+      function stopCamera() {
+        const stream = video.srcObject;
+        if (stream) {
+          stream.getTracks().forEach((t) => t.stop());
+        }
+        video.srcObject = null;
+      }
+
+      async function detectionLoop() {
+        if (!isScanning) return;
+        try {
+          const mdl = await ensureModel();
+          // Guard: skip until video has dimensions
+          if (!video.videoWidth || !video.videoHeight) {
+            requestAnimationFrame(detectionLoop);
+            return;
+          }
+          const predictions = await mdl.detect(video);
+          // Filter only our waste categories
+          const filtered = predictions.filter(p => CATEGORY_MAP[p.class] && p.score > 0.35);
+          drawPredictions(filtered);
+          const best = filtered.sort((a, b) => b.score - a.score)[0];
+          if (best) {
+            const mapped = CATEGORY_MAP[best.class];
+            lastDetection = {
+              category: mapped,
+              points: getPointsForCategory(mapped),
+              sourceClass: best.class,
+              score: best.score,
+            };
+            detectedLabel.textContent = `${mapped} (${best.class} ${(best.score*100).toFixed(0)}%)  +${lastDetection.points}`;
+            btnAddPoints.disabled = false;
+          } else {
+            detectedLabel.textContent = '—';
+            btnAddPoints.disabled = true;
+          }
+        } catch (e) {
+          console.error(e);
+        } finally {
+          if (isScanning) requestAnimationFrame(detectionLoop);
+        }
+      }
+
+      function drawPredictions(predictions) {
+        const dpr = devicePixelRatio;
+        const w = canvas.width;
+        const h = canvas.height;
+        ctx.clearRect(0, 0, w, h);
+        ctx.lineWidth = 2 * dpr;
+        ctx.font = `${12 * dpr}px Inter, sans-serif`;
+        const colorFor = (c) => c === 'plastic' ? 'rgba(14,165,233,0.9)' : c === 'paper' ? 'rgba(37,99,235,0.9)' : c === 'steel' ? 'rgba(234,88,12,0.9)' : 'rgba(16,185,129,0.9)';
+        const fillFor = (c) => c === 'plastic' ? 'rgba(14,165,233,0.15)' : c === 'paper' ? 'rgba(37,99,235,0.15)' : c === 'steel' ? 'rgba(234,88,12,0.15)' : 'rgba(16,185,129,0.15)';
+        predictions.forEach((p) => {
+          const [x, y, wBox, hBox] = p.bbox;
+          const mapped = CATEGORY_MAP[p.class];
+          const stroke = colorFor(mapped);
+          const fill = fillFor(mapped);
+          ctx.strokeStyle = stroke;
+          ctx.fillStyle = fill;
+          ctx.strokeRect(x * dpr, y * dpr, wBox * dpr, hBox * dpr);
+          ctx.fillRect(x * dpr, y * dpr, wBox * dpr, hBox * dpr);
+          ctx.fillStyle = 'rgba(15,23,42,0.9)';
+          const label = `${p.class} ${(p.score * 100).toFixed(0)}%`;
+          ctx.fillRect(x * dpr, (y - 18) * dpr, ctx.measureText(label).width + 8 * dpr, 18 * dpr);
+          ctx.fillStyle = '#fff';
+          ctx.fillText(label, (x + 4) * dpr, (y - 5) * dpr);
+        });
+      }
+
+      // ===== Actions =====
+      async function handleAddPoints() {
+        if (!lastDetection) return;
+        // Persist to DB if available
+        if (supabaseClient && currentUser.id !== 'guest') {
+          try {
+            await dbEnsureProfile();
+            await dbInsertTransaction(lastDetection.points, lastDetection.category, 'waste_deposit');
+            await dbUpdatePoints(lastDetection.points);
+          } catch (e) {
+            console.error(e);
+            toast('Failed to save to database', 'error');
+          }
+        } else {
+          const profile = getProfile();
+          const newPoints = (profile.eco_points || 0) + lastDetection.points;
+          persistProfile({ ...profile, eco_points: newPoints });
+          const txs = getTransactions();
+          txs.push({ id: crypto.randomUUID(), user_id: currentUser.id, points: lastDetection.points, waste_category: lastDetection.category, timestamp: nowISO() });
+          persistTransactions(txs);
+          bumpLeaderboard(currentUser.displayName || 'Guest', lastDetection.points);
+        }
+        await renderPoints();
+        await renderWallet();
+        await renderLeaderboard();
+        toast(`+${lastDetection.points} points for ${lastDetection.category}`);
+      }
+
+      async function exportCSV() {
+        let txs = [];
+        if (supabaseClient && currentUser.id !== 'guest') {
+          txs = await dbGetTransactions();
+        } else {
+          txs = getTransactions();
+        }
+        const header = ['id', 'user_id', 'waste_category', 'points', 'timestamp'];
+        const rows = txs.map((t) => [t.id, t.user_id, t.waste_category, t.points, t.timestamp]);
+        const csv = [header, ...rows].map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `ecowaste_export_${new Date().toISOString().slice(0,10)}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }
+
+      // ===== Event Wiring =====
+      btnDeposit.addEventListener('click', async () => {
+        show(cameraModal);
+        cameraModal.classList.add('flex');
+        await startCamera();
+      });
+
+      btnCloseCamera.addEventListener('click', () => {
+        isScanning = false;
+        hide(scanBadge);
+        stopCamera();
+        hide(cameraModal);
+        cameraModal.classList.remove('flex');
+      });
+
+      btnStartScan.addEventListener('click', async () => {
+        try {
+          await ensureModel();
+          isScanning = true;
+          show(scanBadge);
+          detectionLoop();
+        } catch (e) {
+          console.error(e);
+          toast('Failed to start scanner', 'error');
+        }
+      });
+
+      btnStopScan.addEventListener('click', () => {
+        isScanning = false;
+        hide(scanBadge);
+      });
+
+      btnAddPoints.addEventListener('click', () => handleAddPoints());
+
+      btnExport.addEventListener('click', exportCSV);
+      btnRefreshLb.addEventListener('click', renderLeaderboard);
+
+      btnOpenLogin.addEventListener('click', () => {
+        show(authModal);
+        authModal.classList.add('flex');
+      });
+      btnCloseAuth.addEventListener('click', () => {
+        hide(authModal);
+        authModal.classList.remove('flex');
+      });
+      authForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        try {
+          await signInOrSignUp(authEmail.value, authPassword.value);
+          hide(authModal);
+          authModal.classList.remove('flex');
+          toast('Logged in');
+        } catch (err) {
+          console.error(err);
+          toast('Login failed', 'error');
+        }
+      });
+      btnGuest.addEventListener('click', () => {
+        currentUser = { id: 'guest', email: 'guest@local', displayName: 'Guest' };
+        updateUserChip();
+        hide(authModal);
+        authModal.classList.remove('flex');
+        toast('Continuing as guest');
+      });
+      btnLogout.addEventListener('click', async () => {
+        await signOut();
+        toast('Logged out');
+      });
+
+      // Rewards open/close
+      btnRewards.addEventListener('click', () => {
+        renderRewards();
+        show(rewardsModal);
+        rewardsModal.classList.add('flex');
+      });
+      btnCloseRewards.addEventListener('click', () => {
+        hide(rewardsModal);
+        rewardsModal.classList.remove('flex');
+      });
+
+      // Admin open/close
+      btnOpenAdmin.addEventListener('click', () => {
+        show(adminModal);
+        adminModal.classList.add('flex');
+      });
+      btnCloseAdmin.addEventListener('click', () => {
+        hide(adminModal);
+        adminModal.classList.remove('flex');
+      });
+      adminForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        // Simple credential check; for production, use real auth
+        const u = adminUsername.value.trim();
+        const p = adminPassword.value.trim();
+        const ok = (u === (window.ADMIN_USERNAME || 'admin')) && (p === (window.ADMIN_PASSWORD || 'admin123'));
+        if (!ok) { toast('Invalid admin credentials', 'error'); return; }
+        hide(adminModal);
+        adminModal.classList.remove('flex');
+        await loadAdminPanel();
+        show(adminPanel);
+        adminPanel.classList.add('flex');
+      });
+      btnCloseAdminPanel.addEventListener('click', () => {
+        hide(adminPanel);
+        adminPanel.classList.remove('flex');
+      });
+      btnAdminExport.addEventListener('click', async () => {
+        // Export all transactions (DB or local)
+        let txs = [];
+        if (supabaseClient) {
+          const { data, error } = await supabaseClient
+            .from('transactions')
+            .select('id, user_id, points, waste_category, type, timestamp')
+            .order('timestamp', { ascending: false })
+            .limit(1000);
+          if (!error) txs = data || [];
+        } else {
+          txs = getTransactions();
+        }
+        const header = ['id', 'user_id', 'waste_category', 'points', 'type', 'timestamp'];
+        const rows = txs.map((t) => [t.id || '', t.user_id || '', t.waste_category || '', t.points ?? '', t.type || '', t.timestamp || '']);
+        const csv = [header, ...rows].map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `ecowaste_admin_export_${new Date().toISOString().slice(0,10)}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      });
+
+      async function loadAdminPanel() {
+        // Stats
+        if (supabaseClient) {
+          const [{ data: users }, { data: txs }, { data: profiles }] = await Promise.all([
+            supabaseClient.from('profiles').select('user_id', { count: 'exact', head: false }),
+            supabaseClient.from('transactions').select('id, points, type, timestamp, user_id, waste_category').order('timestamp', { ascending: false }).limit(100),
+            supabaseClient.from('profiles').select('eco_points'),
+          ]);
+          adminTotalUsers.textContent = users?.length ?? 0;
+          adminTotalDeposits.textContent = (txs || []).filter(t => (t.type || 'waste_deposit') === 'waste_deposit' && (t.points || 0) > 0).length;
+          adminTotalPoints.textContent = (profiles || []).reduce((sum, p) => sum + (p.eco_points || 0), 0);
+          adminTxRows.innerHTML = (txs || []).map((t) => {
+            const d = new Date(t.timestamp);
+            const sign = t.points >= 0 ? '+' : '';
+            return `<tr>
+              <td class="py-2 px-2">${d.toLocaleString()}</td>
+              <td class="py-2 px-2">${t.user_id?.slice(0,8)}…</td>
+              <td class="py-2 px-2">${t.waste_category}</td>
+              <td class="py-2 px-2 font-semibold">${sign}${t.points}</td>
+              <td class="py-2 px-2">${t.type || 'waste_deposit'}</td>
+            </tr>`;
+          }).join('');
+        } else {
+          // Local fallback
+          const txs = getTransactions();
+          const lb = getLeaderboard();
+          adminTotalUsers.textContent = lb.length;
+          adminTotalDeposits.textContent = txs.filter(t => t.points > 0).length;
+          adminTotalPoints.textContent = lb.reduce((sum, u) => sum + (u.points || 0), 0);
+          adminTxRows.innerHTML = txs.slice().sort((a, b) => (a.timestamp < b.timestamp ? 1 : -1)).slice(0, 100).map((t) => {
+            const d = new Date(t.timestamp);
+            const sign = t.points >= 0 ? '+' : '';
+            return `<tr>
+              <td class="py-2 px-2">${d.toLocaleString()}</td>
+              <td class="py-2 px-2">local</td>
+              <td class="py-2 px-2">${t.waste_category}</td>
+              <td class="py-2 px-2 font-semibold">${sign}${t.points}</td>
+              <td class="py-2 px-2">${t.points > 0 ? 'waste_deposit' : 'redeem'}</td>
+            </tr>`;
+          }).join('');
+        }
+      }
+
+      // ===== Init =====
+      function initSeed() {
+        if (!localStorage.getItem(LS_KEY_PROFILE)) {
+          persistProfile({ eco_points: 0, email: currentUser.email });
+        }
+        if (!localStorage.getItem(LS_KEY_TX)) {
+          persistTransactions([]);
+        }
+        if (!localStorage.getItem(LS_KEY_LB)) {
+          persistLeaderboard([
+            { name: 'Ava', points: 120 },
+            { name: 'Liam', points: 95 },
+            { name: 'Noah', points: 80 },
+          ]);
+        }
+      }
+
+      window.addEventListener('resize', fitCanvasToVideo);
+      video.addEventListener('loadedmetadata', fitCanvasToVideo);
+
+      document.addEventListener('DOMContentLoaded', () => {
+        initSeed();
+        updateUserChip();
+        renderPoints();
+        renderWallet();
+        renderLeaderboard();
+      })  
+      ipfeather.replace();
+    </script>
+  </body>
+  </html>
+
+
